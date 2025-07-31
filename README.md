@@ -1,6 +1,6 @@
 # Hey!
 
-Hey there, I'm `vracto`, a high school sophomore who's been programming for a _really_ long time. I've dabbled in a bit of everything from microcontrollers to AI to robotics to multiplayer web development!
+Hey there, I'm `vracto`, a sophomore who's been programming for a _really_ long time. I've dabbled in a bit of everything from microcontrollers to AI to robotics to multiplayer web development!
 
 Check out my [site](https://vracton.github.io/)!
 
