@@ -1,8 +1,15 @@
 # Hey!
 
-Hey there, I'm `vracto`, a sophomore who's been programming for a _really_ long time. I've dabbled in a bit of everything from microcontrollers to AI to robotics to multiplayer web development!
+Hey there, I'm `vracto`, a junior who's been programming for a _really_ long time. I've dabbled in a bit of everything from microcontrollers to machine learning to robotics to multiplayer web development!
 
-Check out my [site](https://vracton.github.io/)!
+Check out my [site](https://vracto.xyz) (work in progress)!
+
+## What I'm Working on Now
+**AMC Arena**
+- An iOS app where you practice AMC problems with friends (or enemies) in real time.
+
+**Silicon Cypher**
+- A Skylane 130NM based chip for computing the chacha20 algorithm extremely quickly.
 
 ## Past Projects:
 **[Mairker](https://github.com/vracton/mairker)**
@@ -15,7 +22,7 @@ Check out my [site](https://vracton.github.io/)!
 - A microcontroller spoon I designed, fabricated, and programmed all for adventurers.
 
 **[VEX Robotics Code](https://github.com/vracton/8995V-2023-24)**
-- Code I wrote for the 2023-2024 VEX Robotics game Over Under. Made for my team `8995V` - Vertex!
+- Code I wrote for the 2023-2024 VEX Robotics game Over Under. Made for my team `8995V` - Vertex! We ended up qualifying to our state's quarterfinals with this.
 
 **Science Olympiad Code**
 - C++ microcontroller code for the Science Olympiad events Robot Tour and Electric Vehicle
