@@ -1,0 +1,554 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>vracto</title>
+    <style>
+      :root{
+        --bg:#cfe8ff;
+      }
+      html,body{ margin:0; height:100%; background:var(--bg); overflow:hidden; }
+      #stage{ position:fixed; inset:0; }
+      canvas{ display:block; width:100%; height:100%; }
+      .corner{ position:fixed; right:12px; bottom:12px; color:#003; opacity:.45; font:12px/1.2 system-ui, -apple-system, Segoe UI, Roboto, Arial; }
+    </style>
+  </head>
+  <body>
+    <div id="stage"></div>
+    <div class="corner">scroll to rotate · move mouse to ripple</div>
+
+    <script type="module">
+      import * as THREE from 'https://unpkg.com/three@0.160.0/build/three.module.js';
+
+      const stage = document.getElementById('stage');
+      const renderer = new THREE.WebGLRenderer({ antialias:true, alpha:true, powerPreference:'high-performance' });
+      stage.appendChild(renderer.domElement);
+      renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+      renderer.setClearColor(0xcfe8ff, 1);
+
+      const scene = new THREE.Scene();
+      const camera = new THREE.PerspectiveCamera(45, 1, 0.01, 100);
+      camera.position.set(0,0,2.8);
+      function resize(){
+        const w = stage.clientWidth || innerWidth;
+        const h = stage.clientHeight || innerHeight;
+        renderer.setSize(w, h, false);
+        camera.aspect = w/h; camera.updateProjectionMatrix();
+      }
+      addEventListener('resize', resize); resize();
+
+      const vertex = `
+        varying vec3 vPos; varying vec3 vNormal; varying vec3 vViewPos;
+        uniform float uTime; uniform float uNoiseScale; uniform float uNoiseAmp; uniform vec2 uMouse; uniform float uBaseRadius;
+        vec3 mod289(vec3 x){ return x - floor(x*(1.0/289.0))*289.0; }
+        vec4 mod289(vec4 x){ return x - floor(x*(1.0/289.0))*289.0; }
+        vec4 permute(vec4 x){ return mod289(((x*34.0)+1.0)*x); }
+        vec4 taylorInvSqrt(vec4 r){ return 1.79284291400159 - 0.85373472095314*r; }
+        float snoise(vec3 v){
+          const vec2 C=vec2(1.0/6.0,1.0/3.0); const vec4 D=vec4(0.0,0.5,1.0,2.0);
+          vec3 i=floor(v+dot(v,C.yyy)); vec3 x0=v-i+dot(i,C.xxx);
+          vec3 g=step(x0.yzx,x0.xyz); vec3 l=1.0-g; vec3 i1=min(g.xyz,l.zxy); vec3 i2=max(g.xyz,l.zxy);
+          vec3 x1=x0-i1+C.xxx; vec3 x2=x0-i2+C.yyy; vec3 x3=x0-D.yyy; i=mod289(i);
+          vec4 p=permute(permute(permute(i.z+vec4(0.0,i1.z,i2.z,1.0))+i.y+vec4(0.0,i1.y,i2.y,1.0))+i.x+vec4(0.0,i1.x,i2.x,1.0));
+          float n_=0.142857142857; vec3 ns=n_*D.wyz-D.xzx; vec4 j=p-49.0*floor(p*ns.z*ns.z);
+          vec4 x_=floor(j*ns.z); vec4 y_=floor(j-7.0*x_); vec4 x=x_*ns.x+ns.yyyy; vec4 y=y_*ns.x+ns.yyyy; vec4 h=1.0-abs(x)-abs(y);
+          vec4 b0=vec4(x.xy,y.xy); vec4 b1=vec4(x.zw,y.zw); vec4 s0=floor(b0)*2.0+1.0; vec4 s1=floor(b1)*2.0+1.0; vec4 sh=-step(h,vec4(0.0));
+          vec4 a0=b0.xzyw+s0.xzyw*sh.xxyy; vec4 a1=b1.xzyw+s1.xzyw*sh.zzww; vec3 p0=vec3(a0.xy,h.x); vec3 p1=vec3(a0.zw,h.y); vec3 p2=vec3(a1.xy,h.z); vec3 p3=vec3(a1.zw,h.w);
+          vec4 norm=taylorInvSqrt(vec4(dot(p0,p0),dot(p1,p1),dot(p2,p2),dot(p3,p3))); p0*=norm.x; p1*=norm.y; p2*=norm.z; p3*=norm.w;
+          vec4 m=max(0.6-vec4(dot(x0,x0),dot(x1,x1),dot(x2,x2),dot(x3,x3)),0.0); m=m*m; return 42.0*dot(m*m, vec4(dot(p0,x0),dot(p1,x1),dot(p2,x2),dot(p3,x3)));
+        }
+        void main(){
+          vNormal = normalize(normalMatrix * normal);
+          vec3 pos = normalize(position) * uBaseRadius; vec3 np = normalize(position); float t = uTime;
+          float n1 = snoise(np*uNoiseScale + vec3(t*0.25,t*0.18,t*0.21));
+          float n2 = snoise(np*(uNoiseScale*2.1) - vec3(t*0.11,t*0.17,t*0.09));
+          float n3 = snoise(np.yzx*(uNoiseScale*0.9) + vec3(-t*0.07,t*0.05,t*0.1));
+          float disp = (n1*0.5 + n2*0.35 + n3*0.25) * uNoiseAmp;
+          float swirl = sin(atan(np.z,np.x)*2.0 + t*0.6) * 0.08 * uNoiseAmp; disp += swirl;
+          vec3 mouseDir = normalize(vec3(uMouse,0.9)); float facing = max(dot(normalize(normal),mouseDir),0.0); disp += facing*(uNoiseAmp*0.35);
+          pos += normalize(position) * disp; vPos = pos; vViewPos = (modelViewMatrix*vec4(pos,1.0)).xyz; gl_Position = projectionMatrix * vec4(vViewPos,1.0);
+        }
+      `;
+      const fragment = `
+        varying vec3 vPos; varying vec3 vNormal; varying vec3 vViewPos; uniform float uTime; uniform float uBaseRadius; uniform vec3 uLightDir;
+        void main(){
+          vec3 N = normalize(vNormal), V = normalize(-vViewPos), L = normalize(uLightDir);
+          float fres = pow(1.0 - max(dot(N,V),0.0), 3.0);
+          float lam = max(dot(N,L), 0.0);
+          float inner = smoothstep(uBaseRadius*0.7, uBaseRadius*0.1, length(vPos));
+          vec3 innerCol = vec3(1.00,0.82,0.35), midCol = vec3(1.00,0.50,0.15), rimCol = vec3(1.00,0.24,0.40);
+          vec3 col = mix(midCol, innerCol, inner);
+          col *= 0.60 + 0.9*lam; //darker base
+          float band = 0.5 + 0.5*sin(atan(vPos.z,vPos.x)*1.6 + uTime*0.8);
+          col = mix(col, mix(col, rimCol, 0.35), band*0.18);
+          col += rimCol * fres * 0.8;
+          //increase saturation, then darken slightly
+          float luma = dot(col, vec3(0.299,0.587,0.114));
+          col = mix(vec3(luma), col, 1.25);
+          col *= 0.92 + 0.03*sin(uTime*0.8);
+          gl_FragColor = vec4(col,1.0);
+        }
+      `;
+
+      const uniforms = {
+        uTime:{value:0}, uNoiseScale:{value:1.7}, uNoiseAmp:{value:0.18}, uMouse:{value:new THREE.Vector2(0,0)}, uBaseRadius:{value:0.82}, uLightDir:{value:new THREE.Vector3(-0.4,0.3,0.7).normalize()}
+      };
+      const material = new THREE.ShaderMaterial({ uniforms, vertexShader:vertex, fragmentShader:fragment });
+      const sun = new THREE.Mesh(new THREE.SphereGeometry(1.0,160,160), material); scene.add(sun);
+      const haloMat = new THREE.ShaderMaterial({
+        uniforms:{ uTime:uniforms.uTime, uBaseRadius:uniforms.uBaseRadius },
+        vertexShader:`varying vec3 vPos; varying vec3 vNormal; uniform float uBaseRadius; void main(){ vNormal=normal; vPos=position*(uBaseRadius*1.25); gl_Position=projectionMatrix*modelViewMatrix*vec4(vPos,1.0);} `,
+        fragmentShader:`varying vec3 vPos; varying vec3 vNormal; void main(){ vec3 N=normalize(vNormal), V=normalize(-vPos); float fres=pow(1.0-max(dot(N,V),0.0),2.0); vec3 col=vec3(1.0,0.42,0.28)*fres*0.8; gl_FragColor=vec4(col,fres*0.8);} `,
+        blending:THREE.AdditiveBlending, depthWrite:false, transparent:true
+      });
+      const halo = new THREE.Mesh(new THREE.SphereGeometry(1.0,80,80), haloMat); scene.add(halo);
+
+      const mouse = new THREE.Vector2();
+      addEventListener('pointermove', (e)=>{
+        const r = renderer.domElement.getBoundingClientRect(); const x=(e.clientX-r.left)/r.width; const y=(e.clientY-r.top)/r.height; mouse.set(x*2-1,(1-y)*2-1);
+      });
+
+  const greetings = ['hello', 'hi', 'hey', 'howdy', 'what\'s up'];
+      const labelTexts = ['i\'m sonit','about','work','blog','contact'];
+      const textGroup = new THREE.Group(); scene.add(textGroup);
+      const shadowGroup = new THREE.Group(); scene.add(shadowGroup);
+
+      function makeLabelTextures(text){
+        const padMain = 18*devicePixelRatio, padShadow = 48*devicePixelRatio;
+        const padGlow = 54*devicePixelRatio;
+        const fontPx = 42*devicePixelRatio;
+        const make = (shadow=false)=>{
+          const ctx = document.createElement('canvas').getContext('2d');
+          ctx.font = `900 ${fontPx}px "Arial`;
+          const pad = shadow ? padShadow : padMain;
+          const w = Math.ceil(ctx.measureText(text).width)+pad*2, h = Math.ceil(fontPx*1.6)+pad*2; ctx.canvas.width=w; ctx.canvas.height=h;
+          ctx.font = `900 ${fontPx}px "Arial`; ctx.textBaseline='middle'; ctx.textAlign='center';
+          if(shadow){
+            ctx.fillStyle = '#808080';
+            ctx.shadowColor = 'rgba(0,0,0,1)';
+            ctx.shadowBlur = 40*devicePixelRatio;
+            ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
+            ctx.fillText(text, w/2, h/2+fontPx*0.05);
+          }else{
+            ctx.fillStyle = '#fff';
+            ctx.fillText(text, w/2, h/2+fontPx*0.05);
+          }
+          const tex = new THREE.CanvasTexture(ctx.canvas);
+          tex.generateMipmaps=false; tex.minFilter=THREE.LinearFilter; tex.magFilter=THREE.LinearFilter; tex.anisotropy=Math.min(renderer.capabilities.getMaxAnisotropy(),8);
+          tex.premultiplyAlpha = true; tex.needsUpdate=true; return {tex,w,h};
+        };
+        const {tex:main,w,h} = make(false);
+        const {tex:shadow} = make(true);
+        const makeGlow = ()=>{
+          const ctx = document.createElement('canvas').getContext('2d');
+          ctx.font = `900 ${fontPx}px "`;
+          const w2 = Math.ceil(ctx.measureText(text).width)+padGlow*2, h2 = Math.ceil(fontPx*1.6)+padGlow*2; ctx.canvas.width=w2; ctx.canvas.height=h2;
+          ctx.font = `900 ${fontPx}px "`; ctx.textBaseline='middle'; ctx.textAlign='center';
+          //draw bright shadowed text
+          ctx.fillStyle = '#ffffff';
+          ctx.shadowColor = 'rgba(255,140,80,1)';
+          ctx.shadowBlur = 68*devicePixelRatio;
+          ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
+          ctx.fillText(text, w2/2, h2/2+fontPx*0.05);
+          //punch out the solid center so only outer glow remains
+          ctx.globalCompositeOperation = 'destination-out';
+          ctx.shadowBlur = 0; ctx.shadowColor = 'rgba(0,0,0,0)';
+          ctx.fillStyle = '#ffffff';
+          ctx.fillText(text, w2/2, h2/2+fontPx*0.05);
+          ctx.globalCompositeOperation = 'source-over';
+          const tex = new THREE.CanvasTexture(ctx.canvas);
+          tex.generateMipmaps=false; tex.minFilter=THREE.LinearFilter; tex.magFilter=THREE.LinearFilter; tex.anisotropy=Math.min(renderer.capabilities.getMaxAnisotropy(),8);
+          tex.premultiplyAlpha = true; tex.needsUpdate=true; return {tex,w:w2,h:h2};
+        };
+        const {tex:glow} = makeGlow();
+        return {texture:main, shadowTexture:shadow, glowTexture:glow, width:w/devicePixelRatio, height:h/devicePixelRatio};
+      }
+
+  function makeLabelGroup(text, withGlow=false, withShadow=true){
+  const {texture, shadowTexture, glowTexture, width, height} = makeLabelTextures(text);
+        const aspect=width/height; const H=0.35, W=H*aspect; const geo=new THREE.PlaneGeometry(W,H);
+
+  const frontMat = new THREE.MeshBasicMaterial({map:texture,transparent:true,depthTest:true,depthWrite:false,side:THREE.FrontSide,color:0xffffff,alphaTest:0.02});
+  const front = new THREE.Mesh(geo, frontMat);
+  front.renderOrder = 3; 
+
+        const depthGroup = new THREE.Group();
+        const slices = 8, step = 0.006;
+        for(let i=1;i<=slices;i++){
+          const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({map:texture,transparent:true,depthTest:true,depthWrite:false,side:THREE.FrontSide,color:0x222222,opacity:THREE.MathUtils.lerp(0.85,0.15,i/slices),alphaTest:0.02}));
+          m.position.z = -i*step; m.renderOrder = 3; depthGroup.add(m);
+        }
+  const faceGroup = new THREE.Group();
+  faceGroup.add(depthGroup); faceGroup.add(front);
+  
+        let glow = null;
+        if(withGlow){
+          const glowGeo = new THREE.PlaneGeometry(W*1.06, H*1.08);
+          const glowMat = new THREE.MeshBasicMaterial({map:glowTexture, transparent:true, depthTest:true, depthWrite:false, side:THREE.FrontSide, color:0xffffff, opacity:0.0, blending:THREE.AdditiveBlending});
+          glow = new THREE.Mesh(glowGeo, glowMat);
+        }
+
+  const g = new THREE.Group();
+  if(glow){ glow.renderOrder = 2; g.add(glow); }
+  g.add(faceGroup);
+        g.userData.front = front;
+  g.userData.depthGroup = depthGroup;
+  g.userData.faceGroup = faceGroup;
+  g.userData.glow = glow;
+
+        let shadow = null;
+        if(withShadow){
+          const shadowGeo = new THREE.PlaneGeometry(W*1.02, H*1.02);
+          const shadowMat = new THREE.MeshBasicMaterial({map:shadowTexture, transparent:true, depthTest:true, depthWrite:false, side:THREE.FrontSide, color:0xffffff, opacity:0.28, blending:THREE.MultiplyBlending, alphaTest:0.02});
+          shadow = new THREE.Mesh(shadowGeo, shadowMat);
+          shadow.material.depthFunc = THREE.GreaterEqualDepth; 
+        }
+   return {group:g, front, shadow};
+      }
+
+      const radiusText = 1.02; const radiusShadow = 0.98; const seg = Math.PI*2/labelTexts.length;
+      const labelItems = [];
+      labelTexts.forEach((t,i)=>{
+        const {group, front, shadow} = makeLabelGroup(t, i===0, i===0);
+        const a = -i*seg; const dir = new THREE.Vector3(Math.cos(a),0,Math.sin(a));
+
+        group.position.copy(dir.clone().multiplyScalar(radiusText));
+        group.quaternion.setFromUnitVectors(new THREE.Vector3(0,0,1), dir.clone().normalize());
+        group.renderOrder = 2;
+        textGroup.add(group);
+
+        if(shadow){
+          shadow.position.copy(dir.clone().multiplyScalar(radiusShadow));
+          shadow.quaternion.copy(group.quaternion);
+          shadow.renderOrder = 1;
+          shadowGroup.add(shadow);
+        }
+  labelItems.push({group, front, shadow});
+      });
+
+      const greetingIndex = 0;
+      if(labelItems[greetingIndex]){
+        
+        const greetingShader = {
+          vertex: `
+            varying vec2 vUv; void main(){ vUv=uv; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }
+          `,
+          fragment: `
+            varying vec2 vUv;
+            uniform sampler2D tMapA; uniform sampler2D tMapB;
+            uniform vec2 uTexelA; uniform vec2 uTexelB;
+    uniform float uProgress; uniform float uMaxBlur; uniform float uAlphaTest; uniform float uFaceAlpha; uniform float uOpacity; uniform float uDarken;
+            //9-tap approximate Gaussian blur around uv with radius in pixels
+            vec4 sampleBlur(sampler2D tex, vec2 uv, vec2 texel, float radius){
+              if(radius<=0.0001){ return texture2D(tex, uv); }
+              vec2 o = texel * radius;
+              vec4 c = texture2D(tex, uv) * 0.2;
+              c += texture2D(tex, uv + vec2( o.x, 0.0)) * 0.12;
+              c += texture2D(tex, uv + vec2(-o.x, 0.0)) * 0.12;
+              c += texture2D(tex, uv + vec2( 0.0, o.y)) * 0.12;
+              c += texture2D(tex, uv + vec2( 0.0,-o.y)) * 0.12;
+              c += texture2D(tex, uv + vec2( o.x, o.y)) * 0.08;
+              c += texture2D(tex, uv + vec2(-o.x, o.y)) * 0.08;
+              c += texture2D(tex, uv + vec2( o.x,-o.y)) * 0.08;
+              c += texture2D(tex, uv + vec2(-o.x,-o.y)) * 0.08;
+              return c;
+            }
+            void main(){
+              float p = clamp(uProgress, 0.0, 1.0);
+              float blurA = smoothstep(0.0, 0.5, p) * uMaxBlur;
+              float blurB = (1.0 - smoothstep(0.5, 1.0, p)) * uMaxBlur;
+              float mixAmt = smoothstep(0.22, 0.78, p);
+              vec4 colA = sampleBlur(tMapA, vUv, uTexelA, blurA);
+              vec4 colB = sampleBlur(tMapB, vUv, uTexelB, blurB);
+              vec4 col = mix(colA, colB, mixAmt);
+      col.rgb *= mix(1.0, 0.75, clamp(uDarken, 0.0, 1.0));
+              float a = col.a * uOpacity * uFaceAlpha;
+              if(a < uAlphaTest) discard;
+              gl_FragColor = vec4(col.rgb, a);
+            }
+          `
+        };
+
+  //helpers
+  function buildGreetingTextures(text){
+          const t = makeLabelTextures(text);
+          const aspect = t.width / t.height;
+          return {
+            main: t.texture,
+            shadow: t.shadowTexture,
+            aspect,
+            texel: new THREE.Vector2(1/(t.texture.image.width||1), 1/(t.texture.image.height||1))
+          };
+        }
+  const formGreetingText = (g)=>`${g} i'm sonit`;
+
+        function makeGreetingMaterial(texA, texB){
+          return new THREE.ShaderMaterial({
+            uniforms: {
+              tMapA:{value:texA.main}, tMapB:{value:texB.main},
+              uTexelA:{value:texA.texel}, uTexelB:{value:texB.texel},
+              uProgress:{value:0}, uMaxBlur:{value:2.5}, uAlphaTest:{value:0.02}, uFaceAlpha:{value:1.0}, uOpacity:{value:1.0}, uDarken:{value:0.0}
+            },
+            vertexShader: greetingShader.vertex,
+            fragmentShader: greetingShader.fragment,
+            transparent:true, depthTest:true, depthWrite:false, side:THREE.FrontSide
+          });
+        }
+
+  const greetingPool = [...greetings];
+        let currentIdx = Math.floor(Math.random()*greetingPool.length);
+        let nextIdx = (currentIdx + 1 + Math.floor(Math.random()*(greetingPool.length-1))) % greetingPool.length;
+
+  let texA = buildGreetingTextures(formGreetingText(greetingPool[currentIdx]));
+  let texB = buildGreetingTextures(formGreetingText(greetingPool[nextIdx]));
+
+        const {group: g0, front: f0, shadow: s0} = labelItems[greetingIndex];
+        const depthG0 = g0.userData.depthGroup;
+        const baseAspect0 = (f0.geometry.parameters && f0.geometry.parameters.width && f0.geometry.parameters.height)
+          ? (f0.geometry.parameters.width / f0.geometry.parameters.height) : 1.0;
+
+        function applyAspect(aspect){
+          const sx = aspect / baseAspect0;
+          const faceGroup0 = g0.userData.faceGroup;
+          if(faceGroup0){ faceGroup0.scale.x = sx; } else { f0.scale.x = sx; depthG0.children.forEach(m=>{ m.scale.x = sx; }); }
+          const glow0 = g0.userData.glow; if(glow0){ glow0.scale.x = sx; }
+          s0.scale.x = sx;
+        }
+
+        const greetMat = makeGreetingMaterial(texA, texB);
+        f0.material.dispose();
+        f0.material = greetMat;
+        applyAspect(texA.aspect);
+
+        depthG0.children.forEach(m=>{ m.material.map = texA.main; m.material.needsUpdate = true; });
+        const greetShadowMat = new THREE.ShaderMaterial({
+          uniforms: {
+            tMapA:{value:texA.shadow}, tMapB:{value:texB.shadow},
+            uTexelA:{value:new THREE.Vector2(1/(texA.shadow.image.width||1), 1/(texA.shadow.image.height||1))},
+            uTexelB:{value:new THREE.Vector2(1/(texB.shadow.image.width||1), 1/(texB.shadow.image.height||1))},
+            uProgress:{value:0}, uMaxBlur:{value:3.0}, uAlphaTest:{value:0.02}, uFaceAlpha:{value:1.0}, uOpacity:{value:0.28}
+          },
+          vertexShader: greetingShader.vertex,
+          fragmentShader: greetingShader.fragment,
+          blending: THREE.MultiplyBlending,
+          transparent: true,
+          depthTest: true,
+          depthWrite: false,
+          side: THREE.FrontSide
+        });
+        s0.material.dispose();
+        s0.material = greetShadowMat;
+        s0.material.depthFunc = THREE.GreaterEqualDepth;
+        s0.material.needsUpdate = true;
+
+        let phase = 'hold';
+        let phaseStart = performance.now();
+        const holdMs = 2000, transitionMs = 1100;
+        let swappedMid = false;
+
+        function pickNext(){
+          const prev = nextIdx;
+          let n;
+          do { n = Math.floor(Math.random()*greetingPool.length); } while(n === currentIdx);
+          nextIdx = n;
+        }
+
+  function maybeMidSwap(){
+          if(swappedMid) return;
+          swappedMid = true;
+          depthG0.children.forEach(m=>{ m.material.map = texB.main; m.material.needsUpdate = true; });
+          applyAspect(texB.aspect);
+        }
+
+        function greetingLoop(){
+          const now = performance.now();
+          if(phase === 'hold'){
+            if(now - phaseStart >= holdMs){
+              phase = 'transition'; phaseStart = now; swappedMid = false;
+            }
+          } else if(phase === 'transition'){
+            const t = Math.min(1, (now - phaseStart)/transitionMs);
+            greetMat.uniforms.uProgress.value = t;
+            if(s0.material && s0.material.uniforms && s0.material.uniforms.uProgress){
+              s0.material.uniforms.uProgress.value = t;
+            }
+            if(!swappedMid && t >= 0.5){ maybeMidSwap(); }
+            if(t >= 1){
+              currentIdx = nextIdx; pickNext();
+              const oldA = texA;
+              texA = texB;
+              texB = buildGreetingTextures(formGreetingText(greetingPool[nextIdx]));
+              greetMat.uniforms.tMapA.value = texA.main;
+              greetMat.uniforms.tMapB.value = texB.main;
+              greetMat.uniforms.uTexelA.value = texA.texel;
+              greetMat.uniforms.uTexelB.value = texB.texel;
+              greetMat.uniforms.uProgress.value = 0;
+              greetShadowMat.uniforms.tMapA.value = texA.shadow;
+              greetShadowMat.uniforms.tMapB.value = texB.shadow;
+              greetShadowMat.uniforms.uTexelA.value = new THREE.Vector2(1/(texA.shadow.image.width||1), 1/(texA.shadow.image.height||1));
+              greetShadowMat.uniforms.uTexelB.value = new THREE.Vector2(1/(texB.shadow.image.width||1), 1/(texB.shadow.image.height||1));
+              greetShadowMat.uniforms.uProgress.value = 0;
+              oldA.main.dispose?.(); oldA.shadow.dispose?.();
+              phase = 'hold'; phaseStart = now;
+            }
+          }
+          requestAnimationFrame(greetingLoop);
+        }
+        requestAnimationFrame(greetingLoop);
+      }
+
+      const raycaster = new THREE.Raycaster();
+      const clickable = labelItems.map(it=>it.front);
+      let hoverIndex = -1; let pressedIndex = -1; let isPointerDown = false;
+  const HOVER_INSET = 0.016;
+  const PRESS_INSET = 0.070;
+      const SPRING_K = 0.18; const SPRING_DAMP = 0.82;
+
+  const labelStates = labelItems.map(()=>({ offset:0, vel:0, targetOffset:0, darken:0, targetDarken:0, colMul:1 }));
+
+      function updateHoverFromRay(){
+        raycaster.setFromCamera(mouse, camera);
+        const hits = raycaster.intersectObjects(clickable, false);
+        const newHover = hits.length ? clickable.indexOf(hits[0].object) : -1;
+        hoverIndex = newHover;
+        labelStates.forEach((st, i)=>{
+          const isHover = (i===hoverIndex);
+          const isPressed = (i===pressedIndex) && isPointerDown;
+          st.targetOffset = isPressed ? PRESS_INSET : (isHover ? HOVER_INSET : 0);
+          st.targetDarken = isPressed ? 0.8 : (isHover ? 0.35 : 0);
+        });
+      }
+
+      addEventListener('pointermove', ()=>{ updateHoverFromRay(); });
+  addEventListener('pointerdown', (e)=>{
+        pressedIndex = hoverIndex;
+        isPointerDown = true;
+        updateHoverFromRay();
+      });
+      addEventListener('pointerup', (e)=>{
+        const releasedOn = hoverIndex;
+        const justPressed = pressedIndex;
+        isPointerDown = false;
+        if(justPressed>=0){
+          const st = labelStates[justPressed]; if(st){ st.vel -= 0.12; st.targetOffset = 0; st.targetDarken = 0; }
+          if(justPressed === greetingIndex && releasedOn === justPressed){
+            targetRotY -= seg;
+          } else if(justPressed !== greetingIndex && releasedOn === justPressed){
+            const idx = justPressed;
+            const page = (idx===1?'about': idx===2?'work': idx===3?'blog': idx===4?'contact': null);
+            if(page){ diagonalWipeTo(page + '.html'); }
+          }
+        }
+        pressedIndex = -1;
+      });
+      addEventListener('pointerleave', ()=>{ hoverIndex = -1; if(!isPointerDown){ labelStates.forEach(st=>{ st.targetOffset=0; st.targetDarken=0; }); }});
+
+
+      const baseAngle = -Math.PI/2;
+      let rotY = baseAngle, targetRotY = baseAngle, lastWheelTime = 0; const snapDelay = 10, sensitivity = 0.002;
+      addEventListener('wheel',(e)=>{ e.preventDefault(); const d=(e.deltaY||0)+(e.deltaX||0); targetRotY -= d*sensitivity; lastWheelTime = performance.now(); }, {passive:false});
+      addEventListener('keydown',(e)=>{ if(e.key==='ArrowRight'||e.key==='PageDown'||e.key===' '){ targetRotY -= seg; } if(e.key==='ArrowLeft'||e.key==='PageUp'){ targetRotY += seg; }});
+      function updateLabelFacing(){
+        const p=new THREE.Vector3(), toCam=new THREE.Vector3(), q=new THREE.Quaternion(), n=new THREE.Vector3(0,0,1);
+        labelItems.forEach(({group, front, shadow}, i)=>{
+          group.getWorldPosition(p);
+          toCam.copy(camera.position).sub(p).normalize();
+          group.getWorldQuaternion(q);
+          const normal=n.clone().applyQuaternion(q).normalize();
+          const face=Math.max(normal.dot(toCam),0);
+          const visible = face > 0.02;
+          group.visible = visible;
+          if(i===greetingIndex){
+            if(shadow){ shadow.visible = visible; }
+          } else if(shadow){
+            shadow.visible = false;
+          }
+          if(front.material && front.material.uniforms && front.material.uniforms.uFaceAlpha){
+            front.material.uniforms.uFaceAlpha.value = 0.45 + 0.55*face;
+          } else {
+            front.material.opacity = 0.45 + 0.55*face;
+          }
+          if(shadow && shadow.material && shadow.material.uniforms && shadow.material.uniforms.uFaceAlpha){
+            shadow.material.uniforms.uFaceAlpha.value = 0.45 + 0.55*face;
+          }
+        });
+      }
+
+      const clock = new THREE.Clock();
+      let __isWiping = false;
+      function diagonalWipeTo(url){
+        if(__isWiping) return; __isWiping = true;
+        const wrap = document.createElement('div');
+        wrap.style.position = 'fixed';
+        wrap.style.left = '0'; wrap.style.top = '0';
+        wrap.style.width = '10vw'; wrap.style.height = '10vh';
+        wrap.style.zIndex = '2147483647';
+        wrap.style.pointerEvents = 'none';
+  wrap.style.transform = 'translate(-50vmax, -150vmax)';
+        wrap.style.transition = 'transform 650ms cubic-bezier(0.22, 0.61, 0.36, 1)';
+        wrap.style.willChange = 'transform';
+
+        const panel = document.createElement('div');
+        panel.style.position = 'absolute';
+        panel.style.left = '0'; panel.style.top = '0';
+  panel.style.width = '125vmax'; panel.style.height = '125vmax';
+        panel.style.background = '#ffffff';
+        panel.style.transformOrigin = '0 0';
+        panel.style.transform = 'rotate(45deg)';
+
+        wrap.appendChild(panel);
+        document.body.appendChild(wrap);
+  requestAnimationFrame(()=>{ wrap.style.transform = 'translate(50vmax, -50vmax)'; });
+        const go = ()=>{ window.location.href = url; };
+        wrap.addEventListener('transitionend', go, {once:true});
+        setTimeout(go, 950);
+      }
+      function tick(){
+        uniforms.uTime.value += clock.getDelta(); uniforms.uMouse.value.lerp(mouse,0.07);
+        camera.position.x = THREE.MathUtils.lerp(camera.position.x, mouse.x*0.14, 0.06);
+        camera.position.y = THREE.MathUtils.lerp(camera.position.y, mouse.y*0.10, 0.06); camera.lookAt(0,0,0);
+        sun.rotation.y += 0.0025; halo.rotation.y = sun.rotation.y*0.9;
+        const now = performance.now(); if(now-lastWheelTime>snapDelay){ const k=Math.round((targetRotY - baseAngle)/seg); targetRotY = baseAngle + k*seg; }
+        rotY = THREE.MathUtils.lerp(rotY, targetRotY, 0.12); textGroup.rotation.y = rotY; shadowGroup.rotation.y = rotY; updateLabelFacing();
+        labelItems.forEach((item, i)=>{
+          const st = labelStates[i]; if(!st) return;
+          const err = st.targetOffset - st.offset; st.vel += err * SPRING_K; st.vel *= SPRING_DAMP; st.offset += st.vel;
+          const faceGroup = item.group.userData.faceGroup; const depthG = item.group.userData.depthGroup; const front = item.front; const shadow = item.shadow; const glow = item.group.userData.glow;
+          if(faceGroup){ faceGroup.position.z = -st.offset; }
+          if(depthG){ depthG.children.forEach((m, idx)=>{ m.position.z = -(idx+1)*0.006; }); }
+          if(shadow){ shadow.position.z = -st.offset; }
+          if(glow && i===greetingIndex){ glow.position.z = -st.offset - 0.003; }
+          if(i===greetingIndex && front.material.uniforms && front.material.uniforms.uDarken){
+            front.material.uniforms.uDarken.value = THREE.MathUtils.lerp(front.material.uniforms.uDarken.value, st.targetDarken, 0.2);
+          }else{
+            st.colMul = THREE.MathUtils.lerp(st.colMul, 1.0 - 0.35*st.targetDarken, 0.2);
+            if(front.material && front.material.color){ front.material.color.setScalar(st.colMul); }
+            const depthG = item.group.userData.depthGroup;
+            if(depthG){
+              const base = 0.133;
+              depthG.children.forEach(m=>{ if(m.material && m.material.color){ m.material.color.setScalar(base * st.colMul); } });
+            }
+          }
+          if(shadow && shadow.material){
+            if(shadow.material.uniforms && shadow.material.uniforms.uOpacity){
+              const base = 0.28; const target = base * (1.0 - 0.5*st.targetDarken);
+              shadow.material.uniforms.uOpacity.value = THREE.MathUtils.lerp(shadow.material.uniforms.uOpacity.value, target, 0.2);
+            }else{
+              shadow.material.opacity = THREE.MathUtils.lerp(shadow.material.opacity, 0.28 * (1.0 - 0.5*st.targetDarken), 0.2);
+            }
+          }
+          if(glow && i===greetingIndex){
+            const faceAlpha = (front.material.uniforms && front.material.uniforms.uFaceAlpha) ? front.material.uniforms.uFaceAlpha.value : front.material.opacity;
+            const targetGlow = (0.12 + 0.55*st.targetDarken) * (0.35 + 0.65*faceAlpha);
+            glow.material.opacity = THREE.MathUtils.lerp(glow.material.opacity, targetGlow, 0.18);
+          } else if(glow){
+            glow.material.opacity = 0;
+          }
+        });
+        renderer.render(scene, camera); requestAnimationFrame(tick);
+      }
+      tick();
+    </script>
+  </body>
+</html>
