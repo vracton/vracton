@@ -1,0 +1,1 @@
+Build trigger for the isolated Bink2 WebAssembly branch.
