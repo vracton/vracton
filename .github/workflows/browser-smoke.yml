@@ -1,0 +1,74 @@
+name: Browser smoke test
+
+on:
+  push:
+    branches: [chatgpt-bink2-wasm-build]
+    paths:
+      - 'bink2-web/**'
+      - '.github/workflows/browser-smoke.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  chrome:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Restore tiny BK2 fixture
+        run: |
+          base64 -d bink2-web/tests/sample1.b64 > bink2-web/tests/sample1.bk2
+          test -s bink2-web/tests/sample1.bk2
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('bink2-web/tests/sample1.bk2')
+          b = p.read_bytes()
+          assert b[:3] == b'KB2', b[:4]
+          print('fixture bytes:', len(b), 'magic:', b[:4])
+          PY
+
+      - name: Serve static app
+        run: |
+          nohup python3 -m http.server 8765 --bind 127.0.0.1 --directory bink2-web >/tmp/bink2-http.log 2>&1 &
+          echo $! > /tmp/bink2-http.pid
+          for i in {1..30}; do
+            if curl -fsS http://127.0.0.1:8765/tests/smoke.html >/dev/null; then break; fi
+            sleep 0.2
+          done
+          curl -fsSI http://127.0.0.1:8765/core/bink2-core.wasm
+
+      - name: Run real Worker + WASM + video alpha test in Chrome
+        run: |
+          CHROME="$(command -v google-chrome || command -v chromium || command -v chromium-browser || true)"
+          if [ -z "$CHROME" ]; then
+            echo 'No Chrome/Chromium binary found on runner.' >&2
+            exit 1
+          fi
+          echo "Chrome: $CHROME"
+          set +e
+          "$CHROME" \
+            --headless=new \
+            --no-sandbox \
+            --disable-gpu \
+            --autoplay-policy=no-user-gesture-required \
+            --run-all-compositor-stages-before-draw \
+            --virtual-time-budget=60000 \
+            --dump-dom \
+            http://127.0.0.1:8765/tests/smoke.html \
+            > /tmp/smoke-dom.txt 2>/tmp/chrome-stderr.txt
+          CHROME_RC=$?
+          set -e
+          cat /tmp/chrome-stderr.txt || true
+          cat /tmp/smoke-dom.txt
+          if [ "$CHROME_RC" -ne 0 ]; then
+            echo "Chrome exited with $CHROME_RC" >&2
+            exit "$CHROME_RC"
+          fi
+          grep -E 'id="done">PASS ' /tmp/smoke-dom.txt
+
+      - name: Show server log on failure
+        if: failure()
+        run: cat /tmp/bink2-http.log || true
