@@ -3,10 +3,12 @@ name: Build Bink2 FFmpeg WASM
 on:
   push:
     branches: [chatgpt-bink2-wasm-build]
+    paths-ignore:
+      - 'bink2-web/core/**'
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
@@ -131,7 +133,7 @@ jobs:
             -sINITIAL_MEMORY=268435456 \
             -sMAXIMUM_MEMORY=2147483648 \
             -sEXPORTED_FUNCTIONS='["_transcode_bk2","_bink2_last_error"]' \
-            -sEXPORTED_RUNTIME_METHODS='["FS","UTF8ToString"]' \
+            -sEXPORTED_RUNTIME_METHODS='["FS","UTF8ToString","ccall"]' \
             -o dist/bink2-core.js
           cp ffmpeg/COPYING.LGPLv2.1 dist/
           cp libvpx/LICENSE dist/LICENSE.libvpx
@@ -145,3 +147,19 @@ jobs:
           path: dist
           if-no-files-found: error
           retention-days: 14
+
+      - name: Publish core into static site
+        if: github.ref == 'refs/heads/chatgpt-bink2-wasm-build'
+        run: |
+          mkdir -p bink2-web/core
+          rm -f bink2-web/core/*
+          cp dist/* bink2-web/core/
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -f bink2-web/core
+          if git diff --cached --quiet; then
+            echo 'Generated core is already current.'
+            exit 0
+          fi
+          git commit -m 'build Bink2 WASM core [skip ci]'
+          git push origin HEAD:${GITHUB_REF_NAME}
