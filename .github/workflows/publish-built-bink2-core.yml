@@ -1,0 +1,36 @@
+name: Publish Built Bink2 Core
+
+on:
+  push:
+    branches: [chatgpt-bink2-wasm-build]
+    paths: [.github/workflows/publish-built-bink2-core.yml]
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: chatgpt-bink2-wasm-build
+      - name: Download successful WASM artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api repos/${{ github.repository }}/actions/artifacts/9671307258/zip > /tmp/core.zip
+          rm -rf /tmp/core bink2-wasm/site/core
+          mkdir -p /tmp/core bink2-wasm/site/core
+          unzip -q /tmp/core.zip -d /tmp/core
+          cp /tmp/core/* bink2-wasm/site/core/
+          ls -lh bink2-wasm/site/core
+      - name: Commit generated core to isolated branch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add bink2-wasm/site/core
+          git diff --cached --quiet && exit 0
+          git commit -m "publish built Bink2 WASM core [skip ci]"
+          git push origin HEAD:chatgpt-bink2-wasm-build
