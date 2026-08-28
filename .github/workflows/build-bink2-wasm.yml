@@ -103,7 +103,7 @@ jobs:
             --optflags=-Oz \
             --extra-cflags="-Oz -I$PREFIX/include" \
             --extra-ldflags="-Oz -L$PREFIX/lib"
-          grep -E 'CONFIG_BINK2_DECODER=yes|CONFIG_LIBVPX_VP9_ENCODER=yes|CONFIG_BINK_DEMUXER=yes|CONFIG_WEBM_MUXER=yes' config.mak
+          grep -E 'CONFIG_BINK2_DECODER=yes|CONFIG_LIBVPX_VP9_ENCODER=yes|CONFIG_BINK_DEMUXER=yes|CONFIG_WEBM_MUXER=yes' ffbuild/config.mak
 
       - name: Build FFmpeg libraries
         run: |
