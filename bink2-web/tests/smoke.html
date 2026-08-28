@@ -1,0 +1,72 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Bink2 browser smoke test</title>
+<pre id="status">STARTING</pre>
+<video id="video" muted playsinline></video>
+<canvas id="canvas"></canvas>
+<script>
+const status = document.getElementById('status');
+const finish = (ok, detail) => {
+  status.id = 'done';
+  status.textContent = (ok ? 'PASS ' : 'FAIL ') + JSON.stringify(detail);
+  document.title = ok ? 'PASS' : 'FAIL';
+};
+
+(async () => {
+  try {
+    const input = await (await fetch('./sample1.bk2')).arrayBuffer();
+    const worker = new Worker('../bink2-worker.js');
+    let submitted = false;
+    worker.onmessage = event => {
+      const m = event.data || {};
+      if (m.type === 'ready' && !submitted) {
+        submitted = true;
+        worker.postMessage({ type: 'convert', data: input, crf: 30, cpuUsed: 8 }, [input]);
+      } else if (m.type === 'error') {
+        finish(false, { stage: 'worker', error: m.message });
+      } else if (m.type === 'done') {
+        const blob = new Blob([m.data], { type: 'video/webm' });
+        const video = document.getElementById('video');
+        video.src = URL.createObjectURL(blob);
+        video.onloadeddata = () => {
+          try {
+            const canvas = document.getElementById('canvas');
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            const ctx = canvas.getContext('2d', { willReadFrequently: true });
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.drawImage(video, 0, 0);
+            const pixels = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+            let minAlpha = 255;
+            let maxAlpha = 0;
+            let nonOpaque = 0;
+            for (let i = 3; i < pixels.length; i += 4) {
+              const a = pixels[i];
+              if (a < minAlpha) minAlpha = a;
+              if (a > maxAlpha) maxAlpha = a;
+              if (a < 255) nonOpaque++;
+            }
+            const ok = m.frames === 1 && video.videoWidth === 3200 && video.videoHeight === 1500 && nonOpaque > 0 && minAlpha < 255;
+            finish(ok, {
+              frames: m.frames,
+              bytes: blob.size,
+              width: video.videoWidth,
+              height: video.videoHeight,
+              minAlpha,
+              maxAlpha,
+              nonOpaque
+            });
+          } catch (err) {
+            finish(false, { stage: 'canvas', error: String(err) });
+          }
+        };
+        video.onerror = () => finish(false, { stage: 'video', error: video.error?.message || video.error?.code || 'video decode error' });
+        video.load();
+      }
+    };
+    worker.onerror = event => finish(false, { stage: 'worker-js', error: event.message });
+  } catch (err) {
+    finish(false, { stage: 'setup', error: String(err) });
+  }
+})();
+</script>
