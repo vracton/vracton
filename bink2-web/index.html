@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Bink2 → Transparent WebM</title>
+  <style>
+    :root{color-scheme:dark;--bg:#0f1015;--panel:#181a22;--line:#303441;--text:#f5f6fa;--muted:#9ca3b3;--accent:#8ba4ff;--bad:#ff8080}
+    *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--text);font:15px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+    main{width:min(980px,calc(100% - 32px));margin:40px auto 64px} h1{font-size:clamp(28px,5vw,48px);margin:0 0 8px;letter-spacing:-.035em} p{color:var(--muted)}
+    .panel{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:20px;margin-top:20px}
+    #drop{border:1.5px dashed #555d72;border-radius:13px;padding:34px 20px;text-align:center;cursor:pointer;transition:.15s} #drop.drag{border-color:var(--accent);background:#202539} #drop strong{display:block;font-size:18px;color:var(--text)}
+    input[type=file]{display:none}.row{display:flex;gap:14px;flex-wrap:wrap;align-items:center}.meta{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-top:16px}.datum{background:#11131a;border-radius:10px;padding:10px 12px}.datum span{display:block;color:var(--muted);font-size:12px}.datum b{font-weight:600}
+    label.control{display:flex;align-items:center;gap:8px;color:var(--muted)} select,input[type=number]{background:#101218;color:var(--text);border:1px solid var(--line);border-radius:8px;padding:8px} button,.download{appearance:none;border:0;border-radius:10px;background:var(--accent);color:#0d1122;font-weight:700;padding:10px 16px;text-decoration:none;cursor:pointer} button:disabled,.download.disabled{opacity:.4;pointer-events:none}
+    .status{margin-left:auto;color:var(--muted);font-size:13px}.error{color:var(--bad);white-space:pre-wrap;margin-top:12px}.progress{height:8px;background:#0c0d12;border-radius:20px;overflow:hidden;margin-top:16px}.progress>div{width:0;height:100%;background:var(--accent);transition:width .1s}.hidden{display:none!important}
+    .preview{margin-top:16px;border-radius:12px;overflow:hidden;min-height:260px;display:grid;place-items:center;background-color:#d5d5d5;background-image:linear-gradient(45deg,#aaa 25%,transparent 25%),linear-gradient(-45deg,#aaa 25%,transparent 25%),linear-gradient(45deg,transparent 75%,#aaa 75%),linear-gradient(-45deg,transparent 75%,#aaa 75%);background-size:32px 32px;background-position:0 0,0 16px,16px -16px,-16px 0} video{display:block;max-width:100%;max-height:70vh}
+    code{background:#11131a;border-radius:5px;padding:2px 5px} .fine{font-size:12px}.log{font:12px/1.35 ui-monospace,SFMono-Regular,Consolas,monospace;max-height:150px;overflow:auto;color:#858da0;white-space:pre-wrap}
+  </style>
+</head>
+<body>
+<main>
+  <h1>Bink2 → Transparent WebM</h1>
+  <p>Decode Bink 2 entirely in your browser and encode it as VP9 WebM with the alpha channel preserved. Files never leave your device.</p>
+
+  <section class="panel">
+    <label id="drop" for="file">
+      <strong>Drop a .bk2 file here</strong>
+      <span>or click to choose one</span>
+    </label>
+    <input id="file" type="file" accept=".bk2,video/*">
+    <div id="meta" class="meta hidden"></div>
+  </section>
+
+  <section class="panel">
+    <div class="row">
+      <label class="control">Quality (CRF)
+        <input id="crf" type="number" min="0" max="63" value="18" size="3">
+      </label>
+      <label class="control">Speed
+        <select id="cpu"><option value="3">slower</option><option value="5" selected>balanced</option><option value="7">faster</option><option value="8">fastest</option></select>
+      </label>
+      <button id="convert" disabled>Convert</button>
+      <span id="coreStatus" class="status">Loading decoder…</span>
+    </div>
+    <div id="progressWrap" class="progress hidden"><div id="progress"></div></div>
+    <div id="error" class="error hidden"></div>
+  </section>
+
+  <section id="result" class="panel hidden">
+    <div class="row">
+      <div><strong>Transparent VP9 WebM</strong><div id="outInfo" class="fine"></div></div>
+      <a id="download" class="download disabled" download>Download WebM</a>
+    </div>
+    <div class="preview"><video id="preview" controls loop muted playsinline></video></div>
+    <p class="fine">The checkerboard is the page background, not part of the video. If you can see it through the video, alpha playback is working.</p>
+  </section>
+
+  <details class="panel"><summary>Decoder log</summary><div id="log" class="log"></div></details>
+</main>
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const fileInput=$('file'), drop=$('drop'), meta=$('meta'), convert=$('convert'), coreStatus=$('coreStatus');
+  const progressWrap=$('progressWrap'), progress=$('progress'), error=$('error'), result=$('result'), preview=$('preview'), download=$('download'), outInfo=$('outInfo'), log=$('log');
+  let selected=null, coreReady=false, busy=false, outputURL=null;
+
+  const worker = new Worker('./bink2-worker.js');
+  worker.onmessage = e => {
+    const m=e.data||{};
+    if(m.type==='ready'){
+      coreReady=true; coreStatus.textContent='Decoder ready'; updateConvert();
+    } else if(m.type==='progress'){
+      progressWrap.classList.remove('hidden');
+      if(m.total>0) progress.style.width=Math.min(100,m.frame/m.total*100)+'%';
+      coreStatus.textContent=m.total>0?`Encoding frame ${m.frame}/${m.total}`:`Encoding frame ${m.frame}`;
+    } else if(m.type==='done'){
+      busy=false; coreStatus.textContent='Decoder ready'; progress.style.width='100%';
+      const blob=new Blob([m.data],{type:'video/webm'});
+      if(outputURL) URL.revokeObjectURL(outputURL);
+      outputURL=URL.createObjectURL(blob); preview.src=outputURL; preview.load();
+      preview.play().catch(()=>{});
+      download.href=outputURL; download.download=(selected?.name||'video').replace(/\.bk2$/i,'')+'.webm'; download.classList.remove('disabled');
+      outInfo.textContent=`${formatBytes(blob.size)} · ${m.frames} frames`;
+      result.classList.remove('hidden'); updateConvert();
+    } else if(m.type==='error'){
+      busy=false; coreStatus.textContent=coreReady?'Decoder ready':'Decoder error'; showError(m.message||'Conversion failed'); updateConvert();
+    } else if(m.type==='log'){
+      log.textContent += (m.text||'')+'\n'; log.scrollTop=log.scrollHeight;
+    }
+  };
+  worker.onerror=e=>{showError(`Worker error: ${e.message}`); coreStatus.textContent='Decoder error'};
+
+  function formatBytes(n){ if(n<1024)return n+' B'; if(n<1048576)return(n/1024).toFixed(1)+' KiB'; return(n/1048576).toFixed(1)+' MiB'; }
+  function showError(s){error.textContent=s;error.classList.remove('hidden')}
+  function clearError(){error.textContent='';error.classList.add('hidden')}
+  function updateConvert(){convert.disabled=!selected||!coreReady||busy}
+  function parseBK2(buf){
+    if(buf.byteLength<44) throw new Error('File is too short to be a Bink 2 file.');
+    const bytes=new Uint8Array(buf,0,4), magic=String.fromCharCode(...bytes);
+    if(!/^KB2./.test(magic)) throw new Error(`Expected Bink 2 (KB2), found ${JSON.stringify(magic)}.`);
+    const v=new DataView(buf); const frames=v.getUint32(8,true), width=v.getUint32(20,true), height=v.getUint32(24,true), fpsNum=v.getUint32(28,true), fpsDen=v.getUint32(32,true), flags=v.getUint32(36,true), tracks=v.getUint32(40,true);
+    if(!width||!height||!frames) throw new Error('The Bink 2 header contains invalid dimensions or frame count.');
+    return {magic,frames,width,height,fpsNum,fpsDen,flags,tracks,alpha:!!(flags&0x00100000)};
+  }
+  function renderMeta(f,h){
+    const fps=h.fpsDen?h.fpsNum/h.fpsDen:0;
+    const items=[['File',f.name],['Revision',h.magic],['Size',formatBytes(f.size)],['Resolution',`${h.width}×${h.height}`],['Frames',String(h.frames)],['Frame rate',fps?`${fps.toFixed(3).replace(/\.000$/,'')} fps`:'unknown'],['Alpha',h.alpha?'yes':'no'],['Audio tracks',String(h.tracks)]];
+    meta.innerHTML=items.map(([k,v])=>`<div class="datum"><span>${k}</span><b>${escapeHTML(v)}</b></div>`).join(''); meta.classList.remove('hidden');
+  }
+  function escapeHTML(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+  async function chooseFile(f){
+    clearError(); result.classList.add('hidden'); progressWrap.classList.add('hidden'); progress.style.width='0';
+    if(!f) return;
+    try{const head=await f.slice(0,64).arrayBuffer(); const h=parseBK2(head); selected=f; renderMeta(f,h); updateConvert();}
+    catch(e){selected=null; meta.classList.add('hidden'); showError(e.message); updateConvert();}
+  }
+  fileInput.addEventListener('change',()=>chooseFile(fileInput.files[0]));
+  for(const ev of ['dragenter','dragover']) drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.add('drag')});
+  for(const ev of ['dragleave','drop']) drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.remove('drag')});
+  drop.addEventListener('drop',e=>{const f=e.dataTransfer.files[0];if(f)chooseFile(f)});
+  convert.addEventListener('click',async()=>{
+    if(!selected||!coreReady||busy)return; busy=true; clearError(); result.classList.add('hidden'); download.classList.add('disabled'); progressWrap.classList.remove('hidden'); progress.style.width='0'; coreStatus.textContent='Reading input…'; updateConvert();
+    try{const data=await selected.arrayBuffer(); worker.postMessage({type:'convert',data,crf:Number($('crf').value),cpuUsed:Number($('cpu').value)},[data]);}
+    catch(e){busy=false;showError(e.message);coreStatus.textContent='Decoder ready';updateConvert();}
+  });
+})();
+</script>
+</body>
+</html>
