@@ -2,8 +2,8 @@ let core = null;
 let initializing = null;
 let converting = false;
 
-function send(type, payload = {}) {
-  self.postMessage({ type, ...payload });
+function send(type, payload = {}, transfer = []) {
+  self.postMessage({ type, ...payload }, transfer);
 }
 
 async function init() {
