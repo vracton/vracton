@@ -29,18 +29,16 @@ jobs:
           version: ${{ env.EMSDK_VERSION }}
           actions-cache-folder: emsdk-cache
 
-      - name: Fetch FFmpeg 7.1.2 and Bink2 patch
+      - name: Fetch FFmpeg 7.1.2 and patch Bink2
         run: |
           git clone --depth 1 --branch n7.1.2 https://github.com/FFmpeg/FFmpeg.git ffmpeg
           curl -fL https://raw.githubusercontent.com/sharpemu/ffmpeg-core/master/bink2.patch -o bink2.patch
           cd ffmpeg
           git apply ../bink2.patch
-          # SharpEmu currently stores the alpha bitmask itself in has_alpha.  Later
-          # code uses has_alpha as a count/boolean, so normalize it to 0/1.
           sed -i 's/c->has_alpha = c->flags & BINK_FLAG_ALPHA;/c->has_alpha = !!(c->flags \& BINK_FLAG_ALPHA);/' libavcodec/bink2.c
           grep -F 'c->has_alpha = !!(c->flags & BINK_FLAG_ALPHA);' libavcodec/bink2.c
 
-      - name: Build libvpx VP9 for WASM
+      - name: Build libvpx VP9 encoder for WASM
         run: |
           git clone --depth 1 --branch v1.16.0 https://chromium.googlesource.com/webm/libvpx libvpx
           mkdir -p "$PREFIX"
@@ -66,7 +64,7 @@ jobs:
           emmake make -j"$(nproc)"
           emmake make install
 
-      - name: Configure patched FFmpeg
+      - name: Configure compact FFmpeg libraries
         run: |
           cd ffmpeg
           export PKG_CONFIG_PATH="$PREFIX/lib/pkgconfig"
@@ -87,20 +85,14 @@ jobs:
             --disable-pthreads \
             --disable-w32threads \
             --disable-os2threads \
-            --enable-ffmpeg \
-            --disable-ffprobe \
-            --disable-ffplay \
+            --disable-programs \
             --enable-avcodec \
             --enable-avformat \
-            --enable-avfilter \
-            --enable-swresample \
-            --enable-swscale \
-            --enable-decoder=binkvideo2,binkaudio_dct,binkaudio_rdft \
+            --enable-decoder=bink2,binkaudio_dct,binkaudio_rdft \
             --enable-demuxer=bink \
             --enable-muxer=webm \
-            --enable-encoder=libvpx_vp9,opus \
+            --enable-encoder=libvpx_vp9 \
             --enable-protocol=file \
-            --enable-filter=format,aformat,aresample \
             --enable-libvpx \
             --cc=emcc \
             --cxx=em++ \
@@ -111,23 +103,45 @@ jobs:
             --optflags=-Oz \
             --extra-cflags="-Oz -I$PREFIX/include" \
             --extra-ldflags="-Oz -L$PREFIX/lib"
+          grep -E 'CONFIG_BINK2_DECODER=yes|CONFIG_LIBVPX_VP9_ENCODER=yes|CONFIG_BINK_DEMUXER=yes|CONFIG_WEBM_MUXER=yes' config.mak
 
-      - name: Build browser core
+      - name: Build FFmpeg libraries
         run: |
           cd ffmpeg
-          emmake make -j"$(nproc)" ffmpeg \
-            'LDEXEFLAGS=-Oz -sMODULARIZE=1 -sEXPORT_ES6=1 -sALLOW_MEMORY_GROWTH=1 -sINITIAL_MEMORY=268435456 -sMAXIMUM_MEMORY=2147483648 -sEXIT_RUNTIME=1 -sEXPORTED_RUNTIME_METHODS=FS,callMain -sENVIRONMENT=web,worker'
-          mkdir -p ../dist
-          cp ffmpeg ../dist/ffmpeg.js
-          cp ffmpeg_g.wasm ../dist/ffmpeg_g.wasm
-          cp COPYING.LGPLv2.1 ../dist/
-          file ../dist/*
-          du -h ../dist/*
+          emmake make -j"$(nproc)" \
+            libavformat/libavformat.a \
+            libavcodec/libavcodec.a \
+            libavutil/libavutil.a
+
+      - name: Link browser transcoder module
+        run: |
+          mkdir -p dist
+          emcc bink2-wasm/bink2_transcode.c \
+            -Iffmpeg \
+            ffmpeg/libavformat/libavformat.a \
+            ffmpeg/libavcodec/libavcodec.a \
+            ffmpeg/libavutil/libavutil.a \
+            "$PREFIX/lib/libvpx.a" \
+            -lm -Oz --no-entry \
+            -sMODULARIZE=1 \
+            -sEXPORT_NAME=createBink2Core \
+            -sENVIRONMENT=worker \
+            -sFORCE_FILESYSTEM=1 \
+            -sALLOW_MEMORY_GROWTH=1 \
+            -sINITIAL_MEMORY=268435456 \
+            -sMAXIMUM_MEMORY=2147483648 \
+            -sEXPORTED_FUNCTIONS='["_transcode_bk2","_bink2_last_error"]' \
+            -sEXPORTED_RUNTIME_METHODS='["FS","UTF8ToString"]' \
+            -o dist/bink2-core.js
+          cp ffmpeg/COPYING.LGPLv2.1 dist/
+          cp libvpx/LICENSE dist/LICENSE.libvpx
+          file dist/*
+          du -h dist/*
 
       - name: Upload WASM core
         uses: actions/upload-artifact@v4
         with:
-          name: bink2-ffmpeg-wasm-core
+          name: bink2-web-core
           path: dist
           if-no-files-found: error
           retention-days: 14
